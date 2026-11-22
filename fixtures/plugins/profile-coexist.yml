@@ -1,0 +1,6 @@
+- insert:
+    - id: coexist
+      name: 'D:/TsymQ/MyProject/ds-adapt/dsh-coexist/packages/plugin/index.js'
+      config:
+        watch:
+          - memory_search

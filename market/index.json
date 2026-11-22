@@ -1,0 +1,60 @@
+{
+  "format": 1,
+  "title": {
+    "en": "dsh-coexist plugin index",
+    "zh": "dsh-coexist 插件索引"
+  },
+  "description": {
+    "en": "Self-hosted index source for the dsh-coexist plugin.",
+    "zh": "dsh-coexist 的自托管索引源。"
+  },
+  "metadata": {
+    "categories": {
+      "dev": {
+        "title": {
+          "en": "Development & Runtime",
+          "zh": "开发与运行时"
+        }
+      }
+    },
+    "labels": {},
+    "sortKeys": {}
+  },
+  "plugins": [
+    {
+      "name": "dsh-coexist-plugin",
+      "title": "Qymzz/dsh-coexist",
+      "description": {
+        "en": "Keep plugins that claim the same tool, command, provider or service: duplicate tools become name__coexistN aliases, conflicts are scanned and repaired from a settings page, and every write is backed up.",
+        "zh": "让抢同一个工具 / 命令 / provider / service 的插件尽量都留下：同名工具自动注册为 name__coexistN，设置页提供状态、检查冲突、一键修复、回滚、安装卸载与保留原名；所有写操作先备份。"
+      },
+      "homepage": "https://github.com/Qymzz/dsh-coexist",
+      "repository": {
+        "url": "https://github.com/Qymzz/dsh-coexist",
+        "directory": "packages/plugin"
+      },
+      "metadata": {
+        "category": "dev",
+        "keywords": [
+          "coexistence",
+          "conflict-detection",
+          "plugin-manager"
+        ],
+        "labels": [],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "0.1.0",
+          "publishTimestamp": 1795357316,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": ">=0.2.0 <0.3.0"
+          }
+        }
+      ]
+    }
+  ]
+}

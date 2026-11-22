@@ -1,0 +1,33 @@
+{
+  "name": "dsh-coexist-cli",
+  "version": "0.1.0",
+  "description": "Pre-boot conflict scanner and repair planner for DeepSeek Harness profiles.",
+  "type": "module",
+  "bin": {
+    "dsh-coexist": "bin/dsh-coexist.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "preload.mjs"
+  ],
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "compatibility",
+    "coexistence"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Qymzz/dsh-coexist.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/Qymzz/dsh-coexist#readme",
+  "dependencies": {
+    "yaml": "^2.8.0"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "dsh-coexist-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "node --test packages/plugin/test packages/cli/test",
+    "demo:plugin": "node packages/plugin/demo/mock.js",
+    "cli": "node packages/cli/bin/dsh-coexist.js"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  }
+}

@@ -1,0 +1,3 @@
+- insert:
+    - id: web-ui-compat
+      name: dsh-web-ui

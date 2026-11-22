@@ -1,0 +1,12 @@
+- insert:
+    - id: coexist
+      name: dsh-coexist-plugin
+      config:
+        # alias（默认）：同名不同定义双持；fallback：主实现失败时降级到备份。
+        mode: alias
+        # 有限 service 代理：仅在双方接口不重叠时合并，默认关闭。
+        serviceBridge: false
+        # service 冲突时给后加载插件独立作用域，默认关闭。
+        serviceIsolate: false
+        # 留空表示自动接管所有工具名。
+        watch: []

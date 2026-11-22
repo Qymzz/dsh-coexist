@@ -1,0 +1,12 @@
+- insert:
+    - id: memory-entry
+      name: dsh-memory-a
+    - id: memory-entry
+      name: dsh-memory-b
+# keep me: a comment that should survive a repair
+- replace:
+    - id: agent-default-model
+      name: '@deepseek-ai/dsh-agent-default-model'
+      config:
+        provider: deepseek-official
+        model: deepseek-v4-flash

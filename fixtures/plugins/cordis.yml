@@ -1,0 +1,7 @@
+- insert:
+    - id: fixture-tool-a
+      name: 'D:/TsymQ/MyProject/ds-adapt/dsh-coexist/fixtures/plugins/tool-a/index.js'
+    - id: fixture-tool-b
+      name: 'D:/TsymQ/MyProject/ds-adapt/dsh-coexist/fixtures/plugins/tool-b/index.js'
+    - id: fixture-probe
+      name: 'D:/TsymQ/MyProject/ds-adapt/dsh-coexist/fixtures/plugins/probe/index.js'

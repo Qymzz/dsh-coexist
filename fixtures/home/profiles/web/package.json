@@ -1,0 +1,13 @@
+{
+  "name": "fixture-profile",
+  "private": true,
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "dsh-bundle-a",
+        "dsh-bundle-b",
+        "dsh-bundle-a"
+      ]
+    }
+  }
+}

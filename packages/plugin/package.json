@@ -1,0 +1,59 @@
+{
+  "name": "dsh-coexist-plugin",
+  "version": "0.1.0",
+  "description": "DSH plugin coexistence: keep plugins that claim the same tool, command, provider or service. · DSH 插件共存：同名工具自动别名、冲突检测与一键修复。",
+  "icon": "assets/icon.svg",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "src",
+    "lib",
+    "assets",
+    "cordis.patch.yml"
+  ],
+  "engines": {
+    "dsh": ">=0.2.0 <0.3.0"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "compatibility",
+    "coexistence"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Qymzz/dsh-coexist.git",
+    "directory": "packages/plugin"
+  },
+  "homepage": "https://github.com/Qymzz/dsh-coexist#readme",
+  "dependencies": {
+    "dsh-coexist-cli": "^0.1.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-layout"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh": ">=0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh": {
+      "optional": true
+    }
+  }
+}
