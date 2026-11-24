@@ -53,6 +53,16 @@
           "engines": {
             "dsh": ">=0.2.0 <0.3.0"
           }
+        },
+        {
+          "version": "0.1.1",
+          "publishTimestamp": 1795494470,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": ">=0.2.0 <0.3.0"
+          }
         }
       ]
     }
