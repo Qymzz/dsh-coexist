@@ -10,6 +10,7 @@ import {
   evaluateCompatibility,
   installPlugin,
   uninstallPlugin,
+  installDependency,
   buildMatrix,
   snapshotNodeModules,
   restorePrunedPackages,
@@ -120,6 +121,69 @@ test('installPlugin copies a local plugin, adds dependency and bundle', async ()
   assert.deepEqual(manifest.dsh.profile.bundles, ['dsh-demo'])
   assert.equal(
     await fsp.readFile(path.join(profileDir, 'node_modules', 'dsh-demo', 'index.js'), 'utf8'),
+    'export default {}\n',
+  )
+})
+
+test('installPlugin rejects a package name that escapes the staging root', async () => {
+  const { home, profileDir } = await makeHome()
+  const pluginDir = await makePlugin('../../escape')
+  const sentinel = path.join(profileDir, 'escape')
+  await fsp.mkdir(sentinel, { recursive: true })
+  await fsp.writeFile(path.join(sentinel, 'keep.txt'), 'keep')
+
+  await assert.rejects(
+    installPlugin({
+      home,
+      profile: 'desktop',
+      dshVersion: '0.2.1-rc.4',
+      spec: pluginDir,
+      runCommand: async () => {
+        throw new Error('should not run')
+      },
+    }),
+    /Invalid package name/,
+  )
+  assert.equal(await fsp.readFile(path.join(sentinel, 'keep.txt'), 'utf8'), 'keep')
+})
+
+test('uninstallPlugin rejects a name that escapes node_modules', async () => {
+  const { home, profileDir } = await makeHome({
+    name: 'p',
+    dependencies: {},
+    dsh: { profile: { bundles: [] } },
+  })
+  const sentinel = path.join(profileDir, 'escape')
+  await fsp.mkdir(sentinel, { recursive: true })
+  await fsp.writeFile(path.join(sentinel, 'keep.txt'), 'keep')
+
+  await assert.rejects(
+    uninstallPlugin({ home, profile: 'desktop', spec: '../../escape' }),
+    /Invalid package name/,
+  )
+  assert.equal(await fsp.readFile(path.join(sentinel, 'keep.txt'), 'utf8'), 'keep')
+})
+
+test('installPlugin supports a scoped package name', async () => {
+  const { home, profileDir } = await makeHome()
+  const pluginDir = await makePlugin('@scope/dsh-demo')
+
+  const result = await installPlugin({
+    home,
+    profile: 'desktop',
+    dshVersion: '0.2.1-rc.4',
+    spec: pluginDir,
+    runCommand: async () => {
+      throw new Error('no package manager in test')
+    },
+  })
+
+  assert.equal(result.ok, true, result.error)
+  const manifest = JSON.parse(await fsp.readFile(path.join(profileDir, 'package.json'), 'utf8'))
+  assert.equal(manifest.dependencies['@scope/dsh-demo'], 'file:.dsh-coexist/plugins/@scope/dsh-demo')
+  assert.deepEqual(manifest.dsh.profile.bundles, ['@scope/dsh-demo'])
+  assert.equal(
+    await fsp.readFile(path.join(profileDir, 'node_modules', '@scope', 'dsh-demo', 'index.js'), 'utf8'),
     'export default {}\n',
   )
 })
@@ -390,4 +454,61 @@ test('uninstallPlugin restores packages pruned by the package manager', async ()
   assert.deepEqual(result.restoredPackages, ['peer'])
   assert.equal(fs.existsSync(path.join(nm, 'peer', 'package.json')), true)
   assert.equal(fs.existsSync(path.join(nm, 'dsh-demo')), false)
+})
+
+test('installDependency installs a peer without adding a bundle', async () => {
+  const { home, profileDir } = await makeHome()
+  const calls = []
+  const result = await installDependency({
+    home,
+    profile: 'desktop',
+    dshVersion: '0.2.1-rc.4',
+    name: 'peer-package',
+    version: '1.2.3',
+    runCommand: async (file, args) => {
+      calls.push([file, ...args])
+      return { stdout: '' }
+    },
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.spec, 'peer-package@1.2.3')
+  assert.ok(result.backup)
+  assert.equal(calls.length, 1)
+  assert.ok(calls[0].includes('peer-package@1.2.3'))
+  const manifest = JSON.parse(await fsp.readFile(path.join(profileDir, 'package.json'), 'utf8'))
+  assert.equal(manifest.dsh?.profile?.bundles?.includes('peer-package'), false)
+})
+
+test('installDependency rolls back package.json when the installer fails', async () => {
+  const original = { name: 'p', dependencies: { keep: '1.0.0' }, dsh: { profile: { bundles: [] } } }
+  const { home, profileDir } = await makeHome(original)
+
+  const result = await installDependency({
+    home,
+    profile: 'desktop',
+    dshVersion: '0.2.1-rc.4',
+    name: 'peer-package',
+    version: '1.2.3',
+    runCommand: async () => {
+      throw new Error('install failed')
+    },
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.rolledBack, true)
+  const manifest = JSON.parse(await fsp.readFile(path.join(profileDir, 'package.json'), 'utf8'))
+  assert.deepEqual(manifest.dependencies, { keep: '1.0.0' })
+})
+
+test('installDependency rejects unsafe names and versions', async () => {
+  const { home } = await makeHome()
+  await assert.rejects(
+    installDependency({ home, profile: 'desktop', name: '../../escape', version: '1.0.0' }),
+    /Invalid package name/,
+  )
+  await assert.rejects(
+    installDependency({ home, profile: 'desktop', name: 'peer', version: '1.0.0 & calc' }),
+    /Invalid dependency version/,
+  )
 })

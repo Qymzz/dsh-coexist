@@ -1,6 +1,6 @@
 # dsh-coexist-plugin
 
-**让 DSH 里抢同一个资源的插件尽量都留下。**  
+**让 DSH 里抢同一个资源的插件尽量都留下，并管理它们的依赖、顺序、路由和调用策略。**  
 *Plugin coexistence for DeepSeek Harness: when two plugins claim the same tool, command, provider or service, keep both instead of silently dropping one.*
 
 ---
@@ -12,14 +12,14 @@ DSH 里装了两个插件、它们注册了同一个工具名时，后加载的�
 - **同名 tool**：第二个实现自动注册为 `name__coexist1`（N 个插件依次 `__coexist2`…），两个都能调用。
 - **同名命令 / provider**：运行期自动加后缀别名，调用记录写入报告。
 - **service key 冲突**：诊断双方来源；可选有限代理或上下文隔离，让双方各自可用。
-- **设置页「插件共存」**：状态卡片、检查冲突、一键修复、回滚、安装/卸载、端口释放、保留原名，全部可视化操作。
+- **设置页「插件治理」**：治理概览、依赖与加载顺序、别名路由、工具策略、调用统计、检查冲突、一键修复、回滚、安装/卸载、端口释放，全部可视化操作。
 
 ## 安装
 
 npm：[dsh-coexist-plugin](https://www.npmjs.com/package/dsh-coexist-plugin) ·
 CLI：[dsh-coexist-cli](https://www.npmjs.com/package/dsh-coexist-cli)
 
-上架插件市场后可直接在市场内安装。也可以：
+已上架 awesome-dsh-plugin 市场，可直接在市场内安装。也可以：
 
 ```powershell
 # 通过 CLI 安装（会自动做版本检查、写 profile、失败回滚）
@@ -31,14 +31,19 @@ npx dsh-coexist-cli install dsh-coexist-plugin --profile desktop
 
 插件自带 `dsh-coexist-cli` 依赖，设置页不依赖全局命令；卸载插件不会残留全局工具。
 
-安装完成后重启 DSH，在 **设置 → 插件共存** 查看状态。
+安装完成后重启 DSH，在 **设置 → 插件治理** 查看状态。
 
 ## 设置页
 
-「插件共存」提供：
+「插件治理」提供：
 
 | 操作 | 说明 |
 |---|---|
+| 治理概览 | 插件、冲突、别名、路由规则、策略规则、工具调用、备份 |
+| 依赖与加载顺序 | SVG 依赖图、顺序、版本、peer 缺口、循环依赖；缺失 peer 可一键安装 |
+| 别名路由 | 表单编辑 `routes`，按 agent / 参数 / index 选择同名工具的实现；保存前可校验 |
+| 工具策略 | 表单编辑 `toolPolicies`，按工具名 / agent 允许或拒绝调用；保存前可校验 |
+| 调用统计 | 调用次数、错误、拦截、平均耗时、p95、按 agent 拆分、慢调用 Top |
 | 刷新状态 | 当前 profile、插件数、运行期失败、别名数、备份数 |
 | 检查冲突 | 静态扫描 + 端口探测 + 日志，列出可修复项 |
 | 一键修复 | 生成计划并应用（loader id、重复 bundle、端口、patch 覆盖） |
@@ -69,10 +74,13 @@ npx dsh-coexist-cli install dsh-coexist-plugin --profile desktop
 
 ## 安全与隐私
 
-- 设置页接口注册在宿主 web 服务的 `localhost` 同源路径下，不额外监听端口。
+- 设置页接口先经过 DSH 原生 Connection 检查（Host/Origin 与浏览器会话），再叠加 `localhost` 回环、`POST` + `application/json`、同源校验。
 - 接口只接受 `POST` + `application/json`、本机回环连接；http(s) `Origin` 必须同源。
   跨站表单、`text/plain` 请求和局域网来源都会被拒绝。
 - 插件本身不联网、不上传任何数据；所有状态写入本地 `~/.dsh/coexist`。
+- 安装/卸载会校验包名并限制在 profile 目录内，拒绝 `../`、绝对路径和非法 profile 名。
+- Windows 下不通过 `cmd.exe` 执行 `npm.cmd` / `dsh.cmd`；找不到 `npm-cli.js` 时直接报错。
+- 释放端口前用 `tasklist` 校验进程身份；非 `node.exe` / DSH 进程默认跳过，需要 `--force`。
 - 安装/卸载/回滚都会先备份；卸载、回滚、结束端口进程在 UI 中有二次确认。
 - `serviceIsolate` 默认关闭，需显式开启并重启。
 

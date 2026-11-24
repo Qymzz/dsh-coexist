@@ -4,10 +4,12 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { loadGraph } from '../src/graph.js'
+import { detectDependencyCycles } from '../src/graph.js'
 import { buildPlan } from '../src/plan.js'
 import { applyPlan, renameNthLoaderId } from '../src/apply.js'
 import { rollback } from '../src/backup.js'
 import { runPrefer } from '../src/commands.js'
+import { resolveProfile } from '../src/paths.js'
 
 async function makeHome({ conflicts = true } = {}) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-coexist-'))
@@ -165,4 +167,30 @@ test('prefer moves a plugin to the front of the third-party section', async () =
   } finally {
     await fs.rm(home, { recursive: true, force: true })
   }
+})
+
+test('resolveProfile rejects path traversal and shell metacharacters', () => {
+  assert.equal(resolveProfile('/tmp/home', 'desktop').dir, path.join('/tmp/home', 'profiles', 'desktop'))
+  for (const name of ['../escape', '..\\escape', 'a/b', 'a&b', 'a|b', 'a b', '%PATH%', '.']) {
+    assert.throws(() => resolveProfile('/tmp/home', name), /Invalid profile name/, name)
+  }
+})
+
+test('detectDependencyCycles finds bundle cycles and ignores external deps', () => {
+  const cycles = detectDependencyCycles([
+    { name: 'a', dependencies: { b: '1' }, peers: [] },
+    { name: 'b', dependencies: { c: '1' }, peers: [] },
+    { name: 'c', dependencies: { a: '1' }, peers: [] },
+    { name: 'd', dependencies: { external: '1' }, peers: [] },
+  ])
+  assert.equal(cycles.length, 1)
+  assert.deepEqual([...cycles[0]].sort(), ['a', 'b', 'c'])
+
+  assert.deepEqual(
+    detectDependencyCycles([
+      { name: 'a', dependencies: { b: '1' }, peers: [] },
+      { name: 'b', dependencies: {}, peers: [] },
+    ]),
+    [],
+  )
 })

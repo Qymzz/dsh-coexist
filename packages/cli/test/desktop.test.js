@@ -43,6 +43,35 @@ test('buildLauncherScript sets NODE_OPTIONS internally', () => {
   assert.match(script, /start "" "C:\\Program Files\\DSH NEXT\\DSH NEXT.exe"/)
 })
 
+test('buildLauncherScript escapes percent and keeps quoted special characters', () => {
+  const script = buildLauncherScript({
+    appExe: 'C:\\Apps & Tools\\DSH%20\\DSH NEXT.exe',
+    preloadCjsPath: 'C:\\Users\\me & co\\preload^test\\preload.cjs',
+  })
+
+  assert.match(script, /DSH%%20/)
+  assert.match(script, /Apps & Tools/)
+  assert.match(script, /preload\^test/)
+})
+
+test('buildLauncherScript rejects quotes and newlines', () => {
+  assert.throws(
+    () => buildLauncherScript({ appExe: 'C:\\bad"path\\app.exe', preloadCjsPath: 'C:\\preload.cjs' }),
+    /unsupported character/,
+  )
+  assert.throws(
+    () => buildLauncherScript({ appExe: 'C:\\app.exe', preloadCjsPath: 'C:\\a\nb\\preload.cjs' }),
+    /unsupported character/,
+  )
+})
+
+test('buildVbsLauncher rejects newlines', () => {
+  assert.throws(
+    () => buildVbsLauncher({ appExe: 'C:\\app.exe', preloadCjsPath: 'C:\\a\r\nb\\preload.cjs' }),
+    /unsupported character/,
+  )
+})
+
 test('buildVbsLauncher sets the process environment without a console', () => {
   const script = buildVbsLauncher({
     appExe: 'C:\\Program Files\\DSH NEXT\\DSH NEXT.exe',

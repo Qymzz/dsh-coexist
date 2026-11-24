@@ -50,6 +50,9 @@ async function loadBundleInfo({ name, profileDir }) {
     pkg.peerDependencies && typeof pkg.peerDependencies === 'object'
       ? pkg.peerDependencies
       : {}
+  const dependencies =
+    pkg.dependencies && typeof pkg.dependencies === 'object' ? pkg.dependencies : {}
+  info.dependencies = dependencies
 
   for (const [dep, range] of Object.entries(peerDependencies)) {
     info.peers.push({
@@ -60,6 +63,54 @@ async function loadBundleInfo({ name, profileDir }) {
   }
 
   return info
+}
+
+/**
+ * 在已加载的 bundle 之间找循环依赖；只把同时是 bundle 的依赖/peer 当作边。
+ * 返回的每个环只出现一次（按旋转归一化）。
+ */
+export function detectDependencyCycles(bundles) {
+  const names = new Set((bundles ?? []).map((bundle) => bundle.name))
+  const edges = new Map()
+  for (const bundle of bundles ?? []) {
+    const deps = new Set([
+      ...Object.keys(bundle.dependencies ?? {}),
+      ...(bundle.peers ?? []).map((peer) => peer.name),
+    ])
+    edges.set(bundle.name, [...deps].filter((dep) => names.has(dep)))
+  }
+
+  const cycles = []
+  const seen = new Set()
+  const visiting = new Set()
+  const visited = new Set()
+  const stack = []
+
+  const visit = (name) => {
+    if (visiting.has(name)) {
+      const start = stack.indexOf(name)
+      const cycle = stack.slice(start)
+      const rotations = cycle.map((_, index) =>
+        [...cycle.slice(index), ...cycle.slice(0, index)].join('>'),
+      )
+      const canonical = rotations.sort()[0]
+      if (!seen.has(canonical)) {
+        seen.add(canonical)
+        cycles.push(cycle)
+      }
+      return
+    }
+    if (visited.has(name)) return
+    visiting.add(name)
+    stack.push(name)
+    for (const dep of edges.get(name) ?? []) visit(dep)
+    stack.pop()
+    visiting.delete(name)
+    visited.add(name)
+  }
+
+  for (const name of names) visit(name)
+  return cycles
 }
 
 async function probeBusyPorts(rows, probePort) {
@@ -144,6 +195,7 @@ export async function loadGraph({
     rows,
     busyPorts: [...busyPorts],
     conflicts,
+    cycles: detectDependencyCycles(bundleInfo),
     logFile: logResult.file,
     logIssues: logResult.issues,
   }

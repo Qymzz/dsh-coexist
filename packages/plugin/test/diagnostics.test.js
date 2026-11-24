@@ -13,7 +13,6 @@ import {
   scanEventHooks,
   scanFibers,
 } from '../src/diagnostics.js'
-
 function makeReflect(ctx) {
   return new (class FakeReflect {
     constructor(innerCtx) {
@@ -637,6 +636,38 @@ test('createDiagnostics writes aliases and runtime state to a report file', asyn
       },
     ])
     assert.deepEqual(report.eventHooks, [])
+  } finally {
+    diagnostics.dispose()
+    await fs.rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('tool stats record p95, per-agent breakdown and slow calls', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'coexist-stats-'))
+  const reportFile = path.join(dir, 'report.json')
+  const ctx = {
+    reflect: makeReflect({ fiber: { name: 'coexist' } }),
+    on: () => () => {},
+    registry: { values: () => [] },
+    events: { _hooks: {} },
+  }
+  const diagnostics = createDiagnostics(ctx, { reportFile, log: () => {}, delayMs: 600000 })
+  try {
+    for (let index = 1; index <= 20; index += 1) {
+      diagnostics.recordToolCall({
+        tool: 'memory_search',
+        agent: index % 2 === 0 ? 'agent-b' : 'agent-a',
+        durationMs: index,
+      })
+    }
+    diagnostics.write()
+    const report = JSON.parse(await fs.readFile(reportFile, 'utf8'))
+    assert.equal(report.tools.stats.memory_search.calls, 20)
+    assert.equal(report.tools.stats.memory_search.p95, 19)
+    assert.equal(report.tools.stats.memory_search.agents['agent-a'].calls, 10)
+    assert.equal(report.tools.stats.memory_search.agents['agent-b'].p95, 20)
+    assert.equal(report.tools.slowCalls[0].durationMs, 20)
+    assert.equal(report.tools.slowCalls.length, 10)
   } finally {
     diagnostics.dispose()
     await fs.rm(dir, { recursive: true, force: true })

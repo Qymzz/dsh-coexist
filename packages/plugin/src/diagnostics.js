@@ -42,6 +42,36 @@ export function classifyFailure(message) {
   return 'runtime'
 }
 
+/** 最近 N 次耗时的 p 分位；样本为空时返回 0。 */
+export function percentile(values, p) {
+  const list = Array.isArray(values) ? values.filter((value) => Number.isFinite(value)) : []
+  if (list.length === 0) return 0
+  const sorted = [...list].sort((left, right) => left - right)
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1))
+  return Math.round(sorted[index])
+}
+
+function summarizeToolStat(stat) {
+  const agents = {}
+  for (const [agent, data] of Object.entries(stat.agents ?? {})) {
+    agents[agent] = {
+      calls: data.calls,
+      errors: data.errors,
+      blocked: data.blocked,
+      totalMs: data.totalMs,
+      p95: percentile(data.durations, 0.95),
+    }
+  }
+  return {
+    calls: stat.calls,
+    errors: stat.errors,
+    blocked: stat.blocked,
+    totalMs: stat.totalMs,
+    p95: percentile(stat.durations, 0.95),
+    agents,
+  }
+}
+
 function isServiceConflict(error, name) {
   const message = error?.message
   return (
@@ -621,7 +651,12 @@ export function createDiagnostics(ctx, options = {}) {
           fallbacks: state.fallbacks,
           routes: state.routes,
           calls: state.toolCalls,
-          stats: state.toolStats,
+          stats: Object.fromEntries(
+            Object.entries(state.toolStats).map(([tool, stat]) => [tool, summarizeToolStat(stat)]),
+          ),
+          slowCalls: [...state.toolCalls]
+            .sort((left, right) => right.durationMs - left.durationMs)
+            .slice(0, 10),
         },
         commands: { aliases: state.commandAliases },
         providers: { aliases: state.providerAliases, conflicts: state.providerConflicts },
@@ -759,17 +794,37 @@ export function createDiagnostics(ctx, options = {}) {
   const recordToolCall = (event) => {
     if (!event?.tool) return
     const tool = String(event.tool)
-    const stat = state.toolStats[tool] ?? { calls: 0, errors: 0, blocked: 0, totalMs: 0 }
+    const durationMs = Number(event.durationMs ?? 0)
+    const agent = event.agent == null ? 'unknown' : String(event.agent)
+    const stat =
+      state.toolStats[tool] ??
+      { calls: 0, errors: 0, blocked: 0, totalMs: 0, durations: [], agents: {} }
     stat.calls += 1
-    stat.totalMs += Number(event.durationMs ?? 0)
+    stat.totalMs += durationMs
     if (event.error) stat.errors += 1
     if (event.blocked) stat.blocked += 1
+    stat.durations ??= []
+    stat.durations.push(durationMs)
+    if (stat.durations.length > 200) stat.durations.shift()
+
+    const agentStat =
+      stat.agents?.[agent] ??
+      { calls: 0, errors: 0, blocked: 0, totalMs: 0, durations: [] }
+    agentStat.calls += 1
+    agentStat.totalMs += durationMs
+    if (event.error) agentStat.errors += 1
+    if (event.blocked) agentStat.blocked += 1
+    agentStat.durations ??= []
+    agentStat.durations.push(durationMs)
+    if (agentStat.durations.length > 100) agentStat.durations.shift()
+    stat.agents ??= {}
+    stat.agents[agent] = agentStat
     state.toolStats[tool] = stat
 
     state.toolCalls.push({
       tool,
       agent: event.agent ?? null,
-      durationMs: Number(event.durationMs ?? 0),
+      durationMs,
       blocked: event.blocked === true,
       error: event.error ?? null,
       at: new Date().toISOString(),

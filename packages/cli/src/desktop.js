@@ -78,23 +78,44 @@ export function desktopPaths(home) {
   }
 }
 
+/**
+ * batch 文件里 `%` 会做变量展开，必须写成 `%%` 才是字面量。
+ * Windows 路径不能包含 `"`，换行会截断脚本，遇到就拒绝生成。
+ * `&` / `^` 在双引号内是字面量，不做转义，否则反而会改坏路径。
+ */
+function batchPath(value) {
+  const text = String(value)
+  if (/[\r\n"]/.test(text)) {
+    throw new Error('launcher path contains an unsupported character (quote or newline)')
+  }
+  return text.replace(/%/g, '%%')
+}
+
 export function buildLauncherScript({ appExe, preloadCjsPath }) {
+  const preload = batchPath(preloadCjsPath)
+  const app = batchPath(appExe)
   return [
     '@echo off',
     'setlocal',
-    `set NODE_OPTIONS=--require "${preloadCjsPath}"`,
-    `start "" "${appExe}"`,
+    `set NODE_OPTIONS=--require "${preload}"`,
+    `start "" "${app}"`,
     'exit /b 0',
     '',
   ].join('\r\n')
 }
 
 export function buildVbsLauncher({ appExe, preloadCjsPath }) {
-  const escaped = preloadCjsPath.replace(/"/g, '""')
+  const rawPreload = String(preloadCjsPath)
+  const rawApp = String(appExe)
+  if (/[\r\n]/.test(rawPreload) || /[\r\n]/.test(rawApp)) {
+    throw new Error('launcher path contains an unsupported character (newline)')
+  }
+  const escaped = rawPreload.replace(/"/g, '""')
+  const escapedApp = rawApp.replace(/"/g, '""')
   return [
     'Set shell = CreateObject("WScript.Shell")',
     `shell.Environment("PROCESS")("NODE_OPTIONS") = "--require ""${escaped}"""`,
-    `shell.Run """${appExe}""", 1, False`,
+    `shell.Run """${escapedApp}""", 1, False`,
     '',
   ].join('\r\n')
 }

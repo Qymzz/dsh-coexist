@@ -45,7 +45,15 @@ export async function saveGraph(home, graph) {
     home: graph.home,
     profile: graph.profile,
     bundles: graph.bundles,
+    bundleInfo: (graph.bundleInfo ?? []).map((info) => ({
+      name: info.name,
+      version: info.version,
+      dependencies: info.dependencies ?? {},
+      peers: info.peers ?? [],
+      patchError: info.patchError ?? null,
+    })),
     conflicts: graph.conflicts,
+    cycles: graph.cycles ?? [],
     logFile: graph.logFile,
     logIssues: graph.logIssues,
   })

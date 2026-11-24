@@ -10,7 +10,12 @@ function profileDshBin(home, profile) {
 function globalDshBin() {
   const explicit = process.env.DSH_BIN
   if (explicit) return { file: explicit, prefix: [] }
-  return { file: process.platform === 'win32' ? 'dsh.cmd' : 'dsh', prefix: [] }
+  const candidates = [
+    path.join(process.env.APPDATA ?? '', 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+    path.join(process.env.ProgramFiles ?? '', 'nodejs', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+  ]
+  const cli = candidates.find((file) => file && fs.existsSync(file))
+  return cli ? { file: process.execPath, prefix: [cli] } : null
 }
 
 export function resolveDshBin(home, profile) {
@@ -24,6 +29,12 @@ export function resolveDshBin(home, profile) {
 export function dumpConfig({ home, profile, dshBin, timeoutMs = 60_000 } = {}) {
   const target = dshBin ? { file: dshBin, prefix: [] } : resolveDshBin(home, profile)
   if (!target) return Promise.resolve({ ok: false, error: 'dsh CLI not found' })
+  if (/\.(cmd|bat)$/i.test(target.file)) {
+    return Promise.resolve({
+      ok: false,
+      error: `Unsupported dsh CLI path (use the .js entry instead of .cmd/.bat): ${target.file}`,
+    })
+  }
 
   return new Promise((resolve) => {
     let output = ''
@@ -33,7 +44,6 @@ export function dumpConfig({ home, profile, dshBin, timeoutMs = 60_000 } = {}) {
       child = spawn(target.file, [...target.prefix, '--profile', profile, '--dump-config'], {
         env: { ...process.env, DSH_HOME: home },
         windowsHide: true,
-        shell: process.platform === 'win32' && /\.(cmd|bat)$/i.test(target.file),
       })
     } catch (error) {
       resolve({ ok: false, error: error.message })

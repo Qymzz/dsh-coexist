@@ -171,7 +171,7 @@ function bundledCli() {
   }
 }
 
-/** CLI 解析顺序：显式配置 > 环境变量 > 插件依赖 > PATH。 */
+/** CLI 解析顺序：显式配置 > 环境变量 > 插件依赖。找不到时明确报错，不退回 shell。 */
 export function resolveCli(config = {}) {
   const explicit = config.cliPath ?? process.env.DSH_COEXIST_CLI
   if (explicit) {
@@ -180,6 +180,12 @@ export function resolveCli(config = {}) {
     if (/\.(c|m)?js$/i.test(resolved)) {
       return { ok: true, file: process.execPath, prefix: [resolved], display: resolved, source: 'configured' }
     }
+    if (/\.(cmd|bat)$/i.test(resolved)) {
+      return {
+        ok: false,
+        error: `Unsupported CLI path (use the .js entry instead of .cmd/.bat): ${resolved}`,
+      }
+    }
     return { ok: true, file: resolved, prefix: [], display: resolved, source: 'configured' }
   }
 
@@ -187,22 +193,22 @@ export function resolveCli(config = {}) {
   if (bundled) return bundled
 
   return {
-    ok: true,
-    file: process.platform === 'win32' ? 'dsh-coexist.cmd' : 'dsh-coexist',
-    prefix: [],
+    ok: false,
+    error: 'CLI not found. Reinstall dsh-coexist-plugin so its dsh-coexist-cli dependency is present.',
     display: 'dsh-coexist',
-    source: 'path',
+    source: 'missing',
   }
 }
 
 async function runCli(cli, args, { home } = {}) {
-  const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cli.file)
+  if (cli.ok === false) {
+    return { ok: false, error: cli.error, stdout: '', stderr: '' }
+  }
   try {
     const { stdout, stderr } = await execFileAsync(cli.file, [...cli.prefix, ...args], {
       env: { ...process.env, DSH_HOME: home },
       timeout: 10 * 60_000,
       windowsHide: true,
-      shell: needsShell,
       maxBuffer: 24 * 1024 * 1024,
     })
     return { ok: true, stdout, stderr }
@@ -319,6 +325,12 @@ export function installUiRoutes(ctx, options = {}) {
           ),
         )
       },
+      'install-peer': async (body) => {
+        if (!body.name) return { ok: false, error: 'missing name' }
+        const args = ['install-peer', String(body.name), '--home', home, '--profile', profile, '--json']
+        if (body.version) args.push('--version', String(body.version))
+        return parseCliJson(await runCli(cli, args, { home }))
+      },
       uninstall: async (body) => {
         if (!body.name) return { ok: false, error: 'missing name' }
         return parseCliJson(
@@ -332,9 +344,9 @@ export function installUiRoutes(ctx, options = {}) {
       'free-port': async (body) => {
         const port = Number(body.port)
         if (!Number.isInteger(port)) return { ok: false, error: 'invalid port' }
-        return parseCliJson(
-          await runCli(cli, ['free-port', String(port), '--yes', '--json'], { home }),
-        )
+        const args = ['free-port', String(port), '--yes', '--json']
+        if (body.force === true) args.push('--force')
+        return parseCliJson(await runCli(cli, args, { home }))
       },
       prefer: async (body) => {
         if (!body.plugin) return { ok: false, error: 'missing plugin' }

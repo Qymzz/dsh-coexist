@@ -28,7 +28,7 @@ import {
   renderDesktopStatus,
   renderDesktopLog,
 } from '../src/report.js'
-import { installPlugin, uninstallPlugin, buildMatrix } from '../src/installer.js'
+import { installPlugin, uninstallPlugin, installDependency, buildMatrix } from '../src/installer.js'
 import { freePort } from '../src/ports.js'
 import { fileURLToPath } from 'node:url'
 import { parseRunArgs, runDsh, RUN_HELP } from '../src/launcher.js'
@@ -72,9 +72,10 @@ Options:
   --app <file>       path to the DSH desktop executable (auto-detected by default)
   --dsh-version <v>  override the detected DSH version
   --self             install the bundled dsh-coexist-plugin
-  --force            install even if the version check fails
+  --force            install even if the version check fails; free-port: also kill non-DSH processes
   --dry-run          for install: check only, write nothing
   --plan <id>        apply a saved plan (default: latest)
+  --version <v>      install-peer: version or range to install
   --id <id>          rollback a specific backup id
   --limit <n>        audit entries to show (default 20)
   --dump-config      also run DSH --dump-config as a preflight
@@ -105,6 +106,7 @@ function parseArgs(argv) {
     else if (arg === '--force') options.force = true
     else if (arg === '--dry-run') options.dryRun = true
     else if (arg === '--plan') options.planId = argv[++index]
+    else if (arg === '--version') options.version = argv[++index]
     else if (arg === '--id') options.id = argv[++index]
     else if (arg === '--limit') options.limit = Number(argv[++index])
     else if (arg === '--dump-config') options.dumpConfig = true
@@ -255,11 +257,11 @@ async function main() {
   if (options.command === 'free-port') {
     const port = Number(options.positional[0])
     if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-      console.error('Usage: dsh-coexist free-port <port> [--yes]')
+      console.error('Usage: dsh-coexist free-port <port> [--yes] [--force]')
       process.exitCode = 1
       return
     }
-    const result = await freePort(port, { yes: options.yes })
+    const result = await freePort(port, { yes: options.yes, force: options.force })
     if (options.json) {
       console.log(JSON.stringify(result, null, 2))
     } else if (!result.ok) {
@@ -272,6 +274,38 @@ async function main() {
       console.log(`Port ${port} is held by PID(s): ${result.pids.join(', ')}`)
       console.log('Re-run with --yes to kill them.')
     }
+    if (result.skipped?.length > 0) {
+      console.log(`Skipped ${result.skipped.length} non-DSH process(es):`)
+      for (const item of result.skipped) {
+        console.log(`  PID ${item.pid}${item.name ? ` (${item.name})` : ''}: ${item.reason}`)
+      }
+      console.log('Use --force only if you are sure.')
+    }
+    return
+  }
+
+  if (options.command === 'install-peer') {
+    const name = options.positional[0]
+    if (!name) {
+      console.error('Usage: dsh-coexist install-peer <package> [--version <v>] [--home <dir>] [--profile <name>]')
+      process.exitCode = 1
+      return
+    }
+    const result = await installDependency({
+      home: options.home,
+      profile: options.profile,
+      name,
+      version: options.version,
+    })
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2))
+    } else if (!result.ok) {
+      console.error(result.error)
+    } else {
+      console.log(`Installed ${result.spec} via ${result.packageManager}.`)
+      console.log(`Backup: ${result.backup}`)
+    }
+    if (!result.ok) process.exitCode = 1
     return
   }
 

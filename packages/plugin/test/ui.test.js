@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { connectionRejection, isLoopbackAddress, isSameOrigin, rejectReason } from '../src/ui.js'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { connectionRejection, isLoopbackAddress, isSameOrigin, rejectReason, resolveCli } from '../src/ui.js'
 
 test('isLoopbackAddress accepts loopback and in-process calls', () => {
   assert.equal(isLoopbackAddress(undefined), true)
@@ -84,4 +87,26 @@ test('connectionRejection reads ctx.connection directly and fails closed on erro
   }
   assert.equal(connectionRejection(ctx, req, (line) => logs.push(line)), 403)
   assert.match(logs[0], /connection check failed: boom/)
+})
+
+test('resolveCli accepts a JS entry and rejects cmd/bat paths', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coexist-cli-'))
+  try {
+    const js = path.join(dir, 'cli.js')
+    fs.writeFileSync(js, '')
+    const resolved = resolveCli({ cliPath: js })
+    assert.equal(resolved.ok, true)
+    assert.equal(resolved.file, process.execPath)
+    assert.deepEqual(resolved.prefix, [js])
+
+    for (const name of ['cli.cmd', 'cli.bat']) {
+      const file = path.join(dir, name)
+      fs.writeFileSync(file, '')
+      const rejected = resolveCli({ cliPath: file })
+      assert.equal(rejected.ok, false)
+      assert.match(rejected.error, /Unsupported CLI path/)
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })

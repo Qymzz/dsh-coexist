@@ -5,11 +5,21 @@ export function resolveHome(home) {
   return path.resolve(home ?? process.env.DSH_HOME ?? path.join(os.homedir(), '.dsh'))
 }
 
+/** profile 是目录名，不是路径；拒绝分隔符、`..` 和 shell 元字符。 */
+export function assertSafeProfileName(profile) {
+  const name = String(profile ?? '')
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
+    throw new Error(`Invalid profile name: ${JSON.stringify(name)}`)
+  }
+  return name
+}
+
 export function resolveProfile(home, profile = 'web') {
+  const name = assertSafeProfileName(profile)
   return {
     home,
-    profile,
-    dir: path.join(home, 'profiles', profile),
+    profile: name,
+    dir: path.join(home, 'profiles', name),
   }
 }
 

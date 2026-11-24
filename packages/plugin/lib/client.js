@@ -41,6 +41,10 @@ window.__ModuleLoader__.load({
 .dsh-coexist-kv .v{font-size:14px;font-weight:600;margin-top:2px}
 .dsh-coexist-select{background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:4px 8px;font-size:12px}
 .dsh-coexist-code{font-family:var(--ds-font-family-code,ui-monospace,Consolas,monospace);font-size:11px;color:var(--dsw-alias-label-secondary);word-break:break-all}
+.dsh-coexist-textarea{width:100%;box-sizing:border-box;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:8px 10px;font-family:var(--ds-font-family-code,ui-monospace,Consolas,monospace);font-size:12px;line-height:1.5;resize:vertical;outline:none}
+.dsh-coexist-textarea:focus{border-color:var(--dsw-alias-brand-primary)}
+.dsh-coexist-graph{overflow-x:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-base);padding:4px}
+.dsh-coexist-graph svg{display:block}
 `
 
     async function api(method, body) {
@@ -63,6 +67,89 @@ window.__ModuleLoader__.load({
 
     function countOf(list) {
       return Array.isArray(list) ? list.length : 0
+    }
+
+    function routeDraftFromConfig(routes) {
+      return Object.entries(routes ?? {}).map(([tool, rule]) => ({
+        tool,
+        by: rule?.by === 'args' || rule?.by === 'index' ? rule.by : 'agent',
+        equals: typeof rule?.equals === 'string' ? rule.equals : '',
+        match: rule?.match ? JSON.stringify(rule.match) : '',
+        index: rule?.index == null ? '' : String(rule.index),
+      }))
+    }
+
+    function routesFromDraft(rows) {
+      const out = {}
+      for (const row of rows ?? []) {
+        const tool = String(row.tool ?? '').trim()
+        if (!tool) throw new Error('路由规则缺少工具名')
+        if (row.by === 'args') {
+          let match
+          try {
+            match = JSON.parse(row.match || '{}')
+          } catch (error) {
+            throw new Error(`${tool}: match 不是合法 JSON：${error.message}`)
+          }
+          if (!match || typeof match !== 'object' || Array.isArray(match)) {
+            throw new Error(`${tool}: match 必须是 JSON 对象`)
+          }
+          out[tool] = { by: 'args', match }
+        } else if (row.by === 'index') {
+          const index = Number(row.index)
+          if (!Number.isInteger(index) || index < 0) {
+            throw new Error(`${tool}: index 必须是非负整数`)
+          }
+          out[tool] = { by: 'index', index }
+        } else {
+          const equals = String(row.equals ?? '').trim()
+          if (!equals) throw new Error(`${tool}: 缺少 agent 名`)
+          out[tool] = { by: 'agent', equals }
+        }
+      }
+      return out
+    }
+
+    function policyDraftFromConfig(policies) {
+      return Object.entries(policies ?? {}).map(([tool, rule]) => ({
+        tool,
+        allowAgents: Array.isArray(rule?.allowAgents) ? rule.allowAgents.join(', ') : '',
+        denyAgents: Array.isArray(rule?.denyAgents) ? rule.denyAgents.join(', ') : '',
+        deny: rule?.deny === true || typeof rule?.deny === 'string',
+        reason:
+          typeof rule?.reason === 'string'
+            ? rule.reason
+            : typeof rule?.deny === 'string'
+              ? rule.deny
+              : '',
+      }))
+    }
+
+    function policiesFromDraft(rows) {
+      const out = {}
+      for (const row of rows ?? []) {
+        const tool = String(row.tool ?? '').trim()
+        if (!tool) throw new Error('工具策略缺少工具名')
+        const rule = {}
+        const allowAgents = String(row.allowAgents ?? '')
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean)
+        const denyAgents = String(row.denyAgents ?? '')
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean)
+        if (allowAgents.length > 0) rule.allowAgents = allowAgents
+        if (denyAgents.length > 0) rule.denyAgents = denyAgents
+        if (row.deny === true) rule.deny = true
+        const reason = String(row.reason ?? '').trim()
+        if (reason) rule.reason = reason
+        if (Object.keys(rule).length === 0) {
+          throw new Error(`${tool}: 至少设置 allowAgents / denyAgents / deny / reason 之一`)
+        }
+        out[tool] = rule
+      }
+      return out
     }
 
     function AliasList({ title, rows }) {
@@ -93,6 +180,8 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState('')
       const [message, setMessage] = React.useState(null)
       const [spec, setSpec] = React.useState('')
+      const [routeDraft, setRouteDraft] = React.useState(null)
+      const [policyDraft, setPolicyDraft] = React.useState(null)
 
       // 市场入口：切到宿主「插件」页并关闭设置覆盖层；宿主没有 layout 服务时回退到目录站。
       const openMarket = () => {
@@ -128,6 +217,12 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         refresh()
       }, [])
+
+      React.useEffect(() => {
+        if (!status) return
+        setRouteDraft((prev) => prev ?? routeDraftFromConfig(status.config?.routes))
+        setPolicyDraft((prev) => prev ?? policyDraftFromConfig(status.config?.toolPolicies))
+      }, [status])
 
       const runCheck = async () => {
         setBusy('check')
@@ -225,7 +320,17 @@ window.__ModuleLoader__.load({
         setBusy('free-port')
         try {
           const res = await api('free-port', { port })
-          notify('ok', res.value?.killed?.length ? `已结束进程：${res.value.killed.join(', ')}` : `端口 ${port} 已空闲`)
+          const value = res.value
+          if (value?.skipped?.length) {
+            const names = value.skipped
+              .map((item) => `PID ${item.pid}${item.name ? ` (${item.name})` : ''}`)
+              .join(', ')
+            notify('info', `已跳过非 DSH 进程：${names}。如确认要结束，请使用 CLI free-port --force。`)
+          } else if (value?.killed?.length) {
+            notify('ok', `已结束进程：${value.killed.join(', ')}`)
+          } else {
+            notify('ok', `端口 ${port} 已空闲`)
+          }
         } catch (error) {
           fail(error)
         } finally {
@@ -247,6 +352,22 @@ window.__ModuleLoader__.load({
         }
       }
 
+      const runInstallPeer = async (name, version) => {
+        if (!name) return
+        const spec = version ? `${name}@${version}` : name
+        if (!window.confirm(`安装缺失的 peer：${spec}？`)) return
+        setBusy('install-peer')
+        try {
+          await api('install-peer', { name, version })
+          await refresh()
+          notify('ok', `已安装 ${spec}。可以重新检查依赖图。`)
+        } catch (error) {
+          fail(error)
+        } finally {
+          setBusy('')
+        }
+      }
+
       const toggleIsolate = async (checked) => {
         setBusy('config')
         try {
@@ -260,14 +381,138 @@ window.__ModuleLoader__.load({
         }
       }
 
+      const saveConfigPatch = async (patch, label) => {
+        setBusy('config')
+        try {
+          const res = await api('config', { patch })
+          setStatus((prev) => (prev ? { ...prev, config: res.config } : prev))
+          notify('ok', `${label}已保存，重启 DSH 后生效。`)
+        } catch (error) {
+          fail(error)
+        } finally {
+          setBusy('')
+        }
+      }
+
+      const updateRoute = (index, patch) =>
+        setRouteDraft((rows) => (rows ?? []).map((row, i) => (i === index ? { ...row, ...patch } : row)))
+      const removeRoute = (index) =>
+        setRouteDraft((rows) => (rows ?? []).filter((_, i) => i !== index))
+      const addRoute = () =>
+        setRouteDraft((rows) => [
+          ...(rows ?? []),
+          { tool: '', by: 'agent', equals: '', match: '', index: '' },
+        ])
+
+      const updatePolicy = (index, patch) =>
+        setPolicyDraft((rows) => (rows ?? []).map((row, i) => (i === index ? { ...row, ...patch } : row)))
+      const removePolicy = (index) =>
+        setPolicyDraft((rows) => (rows ?? []).filter((_, i) => i !== index))
+      const addPolicy = () =>
+        setPolicyDraft((rows) => [
+          ...(rows ?? []),
+          { tool: '', allowAgents: '', denyAgents: '', deny: false, reason: '' },
+        ])
+
+      const validateDrafts = () => {
+        try {
+          const routes = routesFromDraft(routeDraft ?? [])
+          const policies = policiesFromDraft(policyDraft ?? [])
+          const known = new Set([
+            ...(report?.tools?.aliases ?? []).map((row) => row.name),
+            ...Object.keys(report?.tools?.stats ?? {}),
+            ...(graphData?.rows ?? []).map((row) => row.tool).filter(Boolean),
+          ])
+          const unknown = [...Object.keys(routes), ...Object.keys(policies)].filter(
+            (tool) => known.size > 0 && !known.has(tool),
+          )
+          notify(
+            unknown.length > 0 ? 'info' : 'ok',
+            unknown.length > 0
+              ? `配置可保存；当前未发现这些工具：${unknown.join(', ')}`
+              : '配置校验通过',
+          )
+          return true
+        } catch (error) {
+          fail(error)
+          return false
+        }
+      }
+
+      const saveRoutes = async () => {
+        try {
+          const value = routesFromDraft(routeDraft ?? [])
+          await saveConfigPatch({ routes: value }, '路由规则')
+          setRouteDraft(routeDraftFromConfig(value))
+        } catch (error) {
+          fail(error)
+        }
+      }
+
+      const resetRoutes = () => {
+        setRouteDraft(routeDraftFromConfig(status?.config?.routes))
+      }
+
+      const savePolicies = async () => {
+        try {
+          const value = policiesFromDraft(policyDraft ?? [])
+          await saveConfigPatch({ toolPolicies: value }, '工具策略')
+          setPolicyDraft(policyDraftFromConfig(value))
+        } catch (error) {
+          fail(error)
+        }
+      }
+
+      const resetPolicies = () => {
+        setPolicyDraft(policyDraftFromConfig(status?.config?.toolPolicies))
+      }
+
       const report = status?.report
-      const conflicts = graph?.conflicts ?? report?.serviceConflicts ?? []
+      const graphData = graph ?? status?.graph
       const aliasRows = [
         ...(report?.tools?.aliases ?? []).map((row) => ({ ...row, kind: 'tool' })),
         ...(report?.commands?.aliases ?? []).map((row) => ({ ...row, kind: 'command' })),
         ...(report?.providers?.aliases ?? []).map((row) => ({ ...row, kind: 'provider' })),
       ]
-      const graphConflicts = graph?.conflicts ?? []
+      const allConflicts = graphData?.conflicts ?? []
+      const peerConflicts = allConflicts.filter((conflict) => conflict.resource?.type === 'peer')
+      const graphConflicts = allConflicts.filter((conflict) => conflict.resource?.type !== 'peer')
+      const bundleInfo = new Map((graphData?.bundleInfo ?? []).map((info) => [info.name, info]))
+      const loadOrder = status?.bundles ?? graphData?.bundles ?? []
+      const cycles = graphData?.cycles ?? []
+      const graphNodes = loadOrder.map((name, index) => ({
+        name,
+        x: 24 + index * 150,
+        y: index % 2 === 0 ? 16 : 72,
+        info: bundleInfo.get(name),
+      }))
+      const graphNodeMap = new Map(graphNodes.map((node) => [node.name, node]))
+      const cycleEdges = new Set()
+      for (const cycle of cycles) {
+        for (let index = 0; index < cycle.length; index += 1) {
+          cycleEdges.add(`${cycle[index]}>${cycle[(index + 1) % cycle.length]}`)
+        }
+      }
+      const graphEdges = []
+      for (const node of graphNodes) {
+        const deps = new Set([
+          ...Object.keys(node.info?.dependencies ?? {}),
+          ...(node.info?.peers ?? []).map((peer) => peer.name),
+        ])
+        for (const dep of deps) {
+          if (!graphNodeMap.has(dep)) continue
+          graphEdges.push({ from: node.name, to: dep, cycle: cycleEdges.has(`${node.name}>${dep}`) })
+        }
+      }
+      const graphWidth = Math.max(640, graphNodes.length * 150 + 40)
+      const routeRules = status?.config?.routes ?? {}
+      const policyRules = status?.config?.toolPolicies ?? {}
+      const toolStats = report?.tools?.stats ?? {}
+      const routeEvents = report?.tools?.routes ?? []
+      const toolCallCount = Object.values(toolStats).reduce(
+        (sum, stat) => sum + Number(stat?.calls ?? 0),
+        0,
+      )
       const bundleNames = new Set(status?.bundles ?? [])
       const busyOn = (name) => busy === name
 
@@ -277,8 +522,8 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'dsh-coexist-head' },
-          h('h2', { className: 'dsh-coexist-title' }, '插件共存'),
-          h('span', { className: 'dsh-coexist-sub' }, '冲突检测、一键修复、安装与回滚'),
+          h('h2', { className: 'dsh-coexist-title' }, '插件治理中心'),
+          h('span', { className: 'dsh-coexist-sub' }, '依赖、加载顺序、别名路由、工具策略与回滚'),
         ),
 
         message
@@ -302,6 +547,10 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'dsh-coexist-kv' }, h('div', { className: 'k' }, '插件'), h('div', { className: 'v' }, String(countOf(status.bundles)))),
                 h('div', { className: 'dsh-coexist-kv' }, h('div', { className: 'k' }, '运行期失败'), h('div', { className: 'v' }, String(countOf(report?.failures)))),
                 h('div', { className: 'dsh-coexist-kv' }, h('div', { className: 'k' }, '别名'), h('div', { className: 'v' }, String(aliasRows.length))),
+                h('div', { className: 'dsh-coexist-kv' }, h('div', { className: 'k' }, '冲突'), h('div', { className: 'v' }, String(allConflicts.length))),
+                h('div', { className: 'dsh-coexist-kv' }, h('div', { className: 'k' }, '路由规则'), h('div', { className: 'v' }, String(Object.keys(routeRules).length))),
+                h('div', { className: 'dsh-coexist-kv' }, h('div', { className: 'k' }, '策略规则'), h('div', { className: 'v' }, String(Object.keys(policyRules).length))),
+                h('div', { className: 'dsh-coexist-kv' }, h('div', { className: 'k' }, '工具调用'), h('div', { className: 'v' }, String(toolCallCount))),
                 h('div', { className: 'dsh-coexist-kv' }, h('div', { className: 'k' }, '备份'), h('div', { className: 'v' }, String(countOf(status.backups)))),
               )
             : h('div', { className: 'dsh-coexist-muted' }, '正在读取状态…'),
@@ -335,6 +584,185 @@ window.__ModuleLoader__.load({
               ),
             )
           : null,
+
+        h(
+          'div',
+          { className: 'dsh-coexist-card' },
+          h('h3', null, '依赖与加载顺序'),
+          h(
+            'div',
+            { className: 'dsh-coexist-muted' },
+            '按 dsh.profile.bundles 顺序从左到右排列；箭头指向依赖，红色虚线表示循环依赖。点“检查冲突”刷新版本与 peer 信息。',
+          ),
+          loadOrder.length
+            ? h(
+                'div',
+                { className: 'dsh-coexist-graph' },
+                h(
+                  'svg',
+                  {
+                    viewBox: `0 0 ${graphWidth} 126`,
+                    width: graphWidth,
+                    height: 126,
+                    role: 'img',
+                    'aria-label': '插件依赖图',
+                  },
+                  h(
+                    'defs',
+                    null,
+                    h(
+                      'marker',
+                      {
+                        id: 'coexist-arrow',
+                        markerWidth: 8,
+                        markerHeight: 8,
+                        refX: 7,
+                        refY: 3,
+                        orient: 'auto',
+                      },
+                      h('path', {
+                        d: 'M0,0 L0,6 L7,3 z',
+                        fill: 'var(--dsw-alias-border-l2)',
+                      }),
+                    ),
+                  ),
+                  graphEdges.map((edge, index) => {
+                    const from = graphNodeMap.get(edge.from)
+                    const to = graphNodeMap.get(edge.to)
+                    return h('line', {
+                      key: `edge-${index}`,
+                      x1: from.x + 120,
+                      y1: from.y + 18,
+                      x2: to.x,
+                      y2: to.y + 18,
+                      stroke: edge.cycle
+                        ? 'var(--dsw-alias-state-error-primary)'
+                        : 'var(--dsw-alias-border-l2)',
+                      strokeWidth: 1.2,
+                      strokeDasharray: edge.cycle ? '4 3' : undefined,
+                      markerEnd: 'url(#coexist-arrow)',
+                    })
+                  }),
+                  graphNodes.map((node) =>
+                    h(
+                      'g',
+                      { key: node.name },
+                      h('rect', {
+                        x: node.x,
+                        y: node.y,
+                        width: 120,
+                        height: 36,
+                        rx: 8,
+                        fill: 'var(--dsw-alias-bg-layer-1)',
+                        stroke: 'var(--dsw-alias-border-l2)',
+                      }),
+                      h(
+                        'text',
+                        {
+                          x: node.x + 60,
+                          y: node.y + 22,
+                          textAnchor: 'middle',
+                          fontSize: 10,
+                          fill: 'var(--dsw-alias-label-primary)',
+                        },
+                        node.name.length > 17 ? node.name.slice(0, 15) + '…' : node.name,
+                      ),
+                    ),
+                  ),
+                ),
+              )
+            : null,
+          loadOrder.length
+            ? h(
+                'ul',
+                { className: 'dsh-coexist-list' },
+                loadOrder.map((name, index) => {
+                  const info = bundleInfo.get(name)
+                  const pinned = name.startsWith('@deepseek-ai/') || name === 'dsh-coexist-plugin'
+                  return h(
+                    'li',
+                    { className: 'dsh-coexist-item', key: name },
+                    h('span', { className: 'dsh-coexist-tag' }, String(index + 1)),
+                    h(
+                      'span',
+                      { className: 'dsh-coexist-item-main' },
+                      name + (info?.version ? ' @ ' + info.version : ''),
+                    ),
+                    info?.patchError
+                      ? h('span', { className: 'dsh-coexist-tag error' }, 'patch 解析失败')
+                      : null,
+                    pinned
+                      ? h('span', { className: 'dsh-coexist-muted' }, '固定')
+                      : h(
+                          'button',
+                          { className: 'dsh-coexist-btn', onClick: () => runPrefer(name), disabled: !!busy },
+                          '置顶',
+                        ),
+                  )
+                }),
+              )
+            : h('div', { className: 'dsh-coexist-muted' }, '还没有启用插件。'),
+          cycles.length
+            ? h(
+                'div',
+                null,
+                h('div', { className: 'dsh-coexist-muted' }, '循环依赖'),
+                h(
+                  'ul',
+                  { className: 'dsh-coexist-list' },
+                  cycles.map((cycle, index) =>
+                    h(
+                      'li',
+                      { className: 'dsh-coexist-item', key: index },
+                      h('span', { className: 'dsh-coexist-tag error' }, 'cycle'),
+                      h(
+                        'span',
+                        { className: 'dsh-coexist-item-main' },
+                        [...cycle, cycle[0]].join(' → '),
+                      ),
+                    ),
+                  ),
+                ),
+              )
+            : null,
+          peerConflicts.length
+            ? h(
+                'div',
+                null,
+                h('div', { className: 'dsh-coexist-muted' }, '版本缺口 / 缺失 peer'),
+                h(
+                  'ul',
+                  { className: 'dsh-coexist-list' },
+                  peerConflicts.map((conflict, index) =>
+                    h(
+                      'li',
+                      { className: 'dsh-coexist-item', key: index },
+                      h(
+                        'span',
+                        { className: 'dsh-coexist-item-main' },
+                        `${conflict.resource.key}: ${conflict.detail}`,
+                      ),
+                      conflict.suggestedVersion
+                        ? h('span', { className: 'dsh-coexist-code' }, '建议 ' + conflict.suggestedVersion)
+                        : null,
+                      conflict.suggestedVersion
+                        ? h(
+                            'button',
+                            {
+                              className: 'dsh-coexist-btn',
+                              onClick: () =>
+                                runInstallPeer(conflict.resource.key, conflict.suggestedVersion),
+                              disabled: !!busy,
+                            },
+                            busyOn('install-peer') ? '安装中…' : '安装建议版本',
+                          )
+                        : null,
+                    ),
+                  ),
+                ),
+              )
+            : null,
+        ),
 
         graphConflicts.length
           ? h(
@@ -385,6 +813,268 @@ window.__ModuleLoader__.load({
               h(AliasList, { title: 'Provider', rows: aliasRows.filter((row) => row.kind === 'provider') }),
             )
           : null,
+
+        h(
+          'div',
+          { className: 'dsh-coexist-card' },
+          h('h3', null, '别名路由'),
+          h(
+            'div',
+            { className: 'dsh-coexist-muted' },
+            '按 agent / 参数 / index 选择同名工具的实现。保存到 coexist/config.json，重启 DSH 后生效。',
+          ),
+          routeDraft?.length
+            ? h(
+                'ul',
+                { className: 'dsh-coexist-list' },
+                routeDraft.map((row, index) =>
+                  h(
+                    'li',
+                    { className: 'dsh-coexist-item', key: index, style: { flexWrap: 'wrap' } },
+                    h('input', {
+                      className: 'dsh-coexist-input',
+                      style: { minWidth: 120, flex: '1 1 120px' },
+                      value: row.tool,
+                      placeholder: '工具名',
+                      onChange: (event) => updateRoute(index, { tool: event.target.value }),
+                    }),
+                    h(
+                      'select',
+                      {
+                        className: 'dsh-coexist-select',
+                        value: row.by,
+                        onChange: (event) => updateRoute(index, { by: event.target.value }),
+                      },
+                      h('option', { value: 'agent' }, 'agent'),
+                      h('option', { value: 'args' }, 'args'),
+                      h('option', { value: 'index' }, 'index'),
+                    ),
+                    row.by === 'agent'
+                      ? h('input', {
+                          className: 'dsh-coexist-input',
+                          style: { minWidth: 120, flex: '1 1 120px' },
+                          value: row.equals,
+                          placeholder: 'agent 名',
+                          onChange: (event) => updateRoute(index, { equals: event.target.value }),
+                        })
+                      : row.by === 'args'
+                        ? h('input', {
+                            className: 'dsh-coexist-input',
+                            style: { minWidth: 160, flex: '1 1 160px' },
+                            value: row.match,
+                            placeholder: '{"scope":"code"}',
+                            onChange: (event) => updateRoute(index, { match: event.target.value }),
+                          })
+                        : h('input', {
+                            className: 'dsh-coexist-input',
+                            style: { minWidth: 80, flex: '0 0 80px' },
+                            value: row.index,
+                            placeholder: '0',
+                            onChange: (event) => updateRoute(index, { index: event.target.value }),
+                          }),
+                    h(
+                      'button',
+                      {
+                        className: 'dsh-coexist-btn danger',
+                        onClick: () => removeRoute(index),
+                        disabled: !!busy,
+                      },
+                      '移除',
+                    ),
+                  ),
+                ),
+              )
+            : h('div', { className: 'dsh-coexist-muted' }, '还没有路由规则。'),
+          h(
+            'div',
+            { className: 'dsh-coexist-row' },
+            h('button', { className: 'dsh-coexist-btn', onClick: addRoute, disabled: !!busy }, '添加路由'),
+            h('button', { className: 'dsh-coexist-btn', onClick: validateDrafts, disabled: !!busy }, '校验配置'),
+            h(
+              'button',
+              { className: 'dsh-coexist-btn primary', onClick: saveRoutes, disabled: !!busy },
+              busyOn('config') ? '保存中…' : '保存路由规则',
+            ),
+            h('button', { className: 'dsh-coexist-btn', onClick: resetRoutes, disabled: !!busy }, '恢复当前配置'),
+          ),
+          routeEvents.length
+            ? h(
+                'div',
+                null,
+                h('div', { className: 'dsh-coexist-muted' }, '最近路由'),
+                h(
+                  'ul',
+                  { className: 'dsh-coexist-list' },
+                  routeEvents
+                    .slice(-5)
+                    .reverse()
+                    .map((event, index) =>
+                      h(
+                        'li',
+                        { className: 'dsh-coexist-item', key: index },
+                        h(
+                          'span',
+                          { className: 'dsh-coexist-item-main' },
+                          `${event.tool} → ${event.target}`,
+                        ),
+                        h('span', { className: 'dsh-coexist-code' }, event.reason || ''),
+                      ),
+                    ),
+                ),
+              )
+            : null,
+        ),
+
+        h(
+          'div',
+          { className: 'dsh-coexist-card' },
+          h('h3', null, '工具策略与调用'),
+          h(
+            'div',
+            { className: 'dsh-coexist-muted' },
+            '按工具名 / agent 允许或拒绝调用；保存后重启生效。调用统计来自 tools/post-execute 观测，不改变宿主行为。',
+          ),
+          policyDraft?.length
+            ? h(
+                'ul',
+                { className: 'dsh-coexist-list' },
+                policyDraft.map((row, index) =>
+                  h(
+                    'li',
+                    { className: 'dsh-coexist-item', key: index, style: { flexWrap: 'wrap' } },
+                    h('input', {
+                      className: 'dsh-coexist-input',
+                      style: { minWidth: 120, flex: '1 1 120px' },
+                      value: row.tool,
+                      placeholder: '工具名',
+                      onChange: (event) => updatePolicy(index, { tool: event.target.value }),
+                    }),
+                    h('input', {
+                      className: 'dsh-coexist-input',
+                      style: { minWidth: 120, flex: '1 1 120px' },
+                      value: row.allowAgents,
+                      placeholder: 'allowAgents，逗号分隔',
+                      onChange: (event) => updatePolicy(index, { allowAgents: event.target.value }),
+                    }),
+                    h('input', {
+                      className: 'dsh-coexist-input',
+                      style: { minWidth: 120, flex: '1 1 120px' },
+                      value: row.denyAgents,
+                      placeholder: 'denyAgents，逗号分隔',
+                      onChange: (event) => updatePolicy(index, { denyAgents: event.target.value }),
+                    }),
+                    h(
+                      'label',
+                      { className: 'dsh-coexist-row', style: { flex: '0 0 auto' } },
+                      h('input', {
+                        type: 'checkbox',
+                        checked: row.deny,
+                        onChange: (event) => updatePolicy(index, { deny: event.target.checked }),
+                      }),
+                      h('span', null, '整体拒绝'),
+                    ),
+                    h('input', {
+                      className: 'dsh-coexist-input',
+                      style: { minWidth: 160, flex: '1 1 160px' },
+                      value: row.reason,
+                      placeholder: '拒绝原因（可选）',
+                      onChange: (event) => updatePolicy(index, { reason: event.target.value }),
+                    }),
+                    h(
+                      'button',
+                      {
+                        className: 'dsh-coexist-btn danger',
+                        onClick: () => removePolicy(index),
+                        disabled: !!busy,
+                      },
+                      '移除',
+                    ),
+                  ),
+                ),
+              )
+            : h('div', { className: 'dsh-coexist-muted' }, '还没有工具策略。'),
+          h(
+            'div',
+            { className: 'dsh-coexist-row' },
+            h('button', { className: 'dsh-coexist-btn', onClick: addPolicy, disabled: !!busy }, '添加策略'),
+            h('button', { className: 'dsh-coexist-btn', onClick: validateDrafts, disabled: !!busy }, '校验配置'),
+            h(
+              'button',
+              { className: 'dsh-coexist-btn primary', onClick: savePolicies, disabled: !!busy },
+              busyOn('config') ? '保存中…' : '保存工具策略',
+            ),
+            h('button', { className: 'dsh-coexist-btn', onClick: resetPolicies, disabled: !!busy }, '恢复当前配置'),
+          ),
+          Object.keys(toolStats).length
+            ? h(
+                'div',
+                null,
+                h('div', { className: 'dsh-coexist-muted' }, '调用统计'),
+                h(
+                  'ul',
+                  { className: 'dsh-coexist-list' },
+                  Object.entries(toolStats)
+                    .sort((left, right) => Number(right[1]?.calls ?? 0) - Number(left[1]?.calls ?? 0))
+                    .slice(0, 8)
+                    .map(([tool, stat]) => {
+                      const agents = Object.entries(stat.agents ?? {})
+                        .sort(
+                          (left, right) =>
+                            Number(right[1]?.calls ?? 0) - Number(left[1]?.calls ?? 0),
+                        )
+                        .slice(0, 3)
+                        .map(
+                          ([agent, data]) =>
+                            `${agent}: ${data.calls}次 / p95 ${data.p95 ?? 0}ms`,
+                        )
+                        .join(' · ')
+                      return h(
+                        'li',
+                        { className: 'dsh-coexist-item', key: tool, style: { flexWrap: 'wrap' } },
+                        h('span', { className: 'dsh-coexist-item-main' }, tool),
+                        h(
+                          'span',
+                          { className: 'dsh-coexist-code' },
+                          `${stat.calls} 次 · ${stat.errors} 错误 · ${stat.blocked} 拦截 · 平均 ${Math.round(
+                            Number(stat.totalMs ?? 0) / Math.max(1, Number(stat.calls ?? 0)),
+                          )}ms · p95 ${stat.p95 ?? 0}ms`,
+                        ),
+                        agents
+                          ? h(
+                              'div',
+                              { className: 'dsh-coexist-muted', style: { flexBasis: '100%' } },
+                              agents,
+                            )
+                          : null,
+                      )
+                    }),
+                ),
+              )
+            : h('div', { className: 'dsh-coexist-muted' }, '还没有调用记录；调用工具后这里会出现统计。'),
+          report?.tools?.slowCalls?.length
+            ? h(
+                'div',
+                null,
+                h('div', { className: 'dsh-coexist-muted' }, '慢调用 Top'),
+                h(
+                  'ul',
+                  { className: 'dsh-coexist-list' },
+                  report.tools.slowCalls.slice(0, 5).map((call, index) =>
+                    h(
+                      'li',
+                      { className: 'dsh-coexist-item', key: index },
+                      h(
+                        'span',
+                        { className: 'dsh-coexist-item-main' },
+                        `${call.tool} · ${call.agent ?? 'unknown'}`,
+                      ),
+                      h('span', { className: 'dsh-coexist-code' }, `${call.durationMs}ms`),
+                    ),
+                  ),
+                ),
+              )
+            : null,
+        ),
 
         report?.failures?.length
           ? h(
@@ -531,7 +1221,7 @@ window.__ModuleLoader__.load({
             name: 'settings.section',
             id: 'coexist',
             order: 16,
-            label: () => '插件共存',
+            label: () => '插件治理',
           },
           Section,
         ),

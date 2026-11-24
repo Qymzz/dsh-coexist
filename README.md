@@ -1,6 +1,6 @@
 # dsh-coexist
 
-DSH 插件共存工具（0.1.1）。
+DSH 插件共存与治理工具（0.1.2）。
 
 当两个插件抢同一个工具、命令、provider 或 service 时，尽量让它们都留下，而不是默认卸载一个。
 
@@ -66,9 +66,12 @@ npx dsh-coexist-cli matrix --profile desktop
 
 ## 设置页
 
-DSH 的 **设置 → 插件共存** 提供：
+DSH 的 **设置 → 插件治理**（页面标题：插件治理中心）提供：
 
-- 状态卡片：Profile、插件数、运行期失败、别名、备份
+- 治理概览：插件、冲突、别名、路由规则、策略规则、工具调用、备份
+- 依赖与加载顺序：SVG 依赖图、加载顺序、版本和 peer 缺口、循环依赖；缺失 peer 可一键安装
+- 别名路由：表单编辑 `routes`，按 agent / 参数 / index 选择同名工具的实现；保存前可校验
+- 工具策略：表单编辑 `toolPolicies`，按工具名 / agent 允许或拒绝调用；展示调用次数、错误、拦截、平均耗时、p95、按 agent 拆分和慢调用 Top
 - 检查冲突、一键修复（先展示动作再确认）、回滚最近备份
 - 安装 / 卸载插件
 - 插件市场入口：切到宿主插件页的市场标签；宿主没有 `layout` 服务时回退到浏览器打开目录
@@ -76,12 +79,14 @@ DSH 的 **设置 → 插件共存** 提供：
 - “保留原名”下拉：把选中的 bundle 移到第三方插件段最前，重启后它保留原名
 - service 隔离开关（写 `coexist/config.json`，重启生效）
 
+依赖图、路由和策略的修改都写入 `coexist/config.json` 或 `package.json`，重启 DSH 后生效。
+
 设置页的写操作统一转给 CLI 执行，避免两套逻辑分叉。CLI 解析顺序：
 
 1. 插件 config 的 `cliPath`（排障/自定义安装时用）
 2. 环境变量 `DSH_COEXIST_CLI`
 3. 插件依赖 `dsh-coexist-cli`（正常安装自动带上）
-4. PATH 上的 `dsh-coexist`
+4. 找不到时明确报错，不再回退到 PATH 上的 `.cmd`
 
 当前 profile 从宿主 loader 自动识别，不需要手动填 `profile`。UI 只读取当前 profile 的备份。
 
@@ -98,7 +103,9 @@ npx dsh-coexist-cli audit --limit 20
 npx dsh-coexist-cli backups
 npx dsh-coexist-cli prefer <plugin> --profile desktop
 npx dsh-coexist-cli free-port 4100 --yes
+npx dsh-coexist-cli free-port 4100 --yes --force   # 确认要结束非 DSH 进程时再用
 npx dsh-coexist-cli install <plugin|包名|本地目录> --profile desktop
+npx dsh-coexist-cli install-peer <package> --version <v> --profile desktop
 npx dsh-coexist-cli uninstall <plugin> --profile desktop
 npx dsh-coexist-cli matrix --profile desktop
 ```
@@ -170,6 +177,9 @@ config:
 - 不做假路由、不做静默替换
 - 设置页接口先经过 DSH 原生 Connection 检查（Host/Origin 与浏览器会话），再叠加本机回环、`POST` + `application/json`、同源校验
 - 跨站表单、`text/plain` 请求和局域网来源都会被拒绝
+- 安装/卸载会校验包名并限制在 profile 目录内，拒绝 `../`、绝对路径和非法 profile 名
+- Windows 下不再通过 `cmd.exe` 执行 `npm.cmd` / `dsh.cmd`；找不到 `npm-cli.js` 时直接报错，避免参数被 shell 解释
+- 释放端口前用 `tasklist` 校验进程身份；非 `node.exe` / DSH 进程默认跳过，需要 `--force` 才会结束
 - 卸载、回滚、结束端口进程在 UI 里都有二次确认
 
 ## 已知限制
@@ -233,7 +243,7 @@ name: dsh-coexist-plugin
 
 ## 发布状态
 
-- npm：`dsh-coexist-plugin@0.1.1`、`dsh-coexist-cli@0.1.1`
+- npm：`dsh-coexist-plugin@0.1.2`、`dsh-coexist-cli@0.1.2`
 - GitHub：https://github.com/Qymzz/dsh-coexist
 - 市场：已合并（PR [#17878](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/17878)）
 - 自托管索引：`market/index.json`

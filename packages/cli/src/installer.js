@@ -3,11 +3,12 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { createBackup } from './backup.js'
+import { createBackup, rollbackById } from './backup.js'
 import { resolveHome, resolveProfile, profilePackageJson, profilePatch } from './paths.js'
 import { satisfies } from './semver.js'
 import { dumpConfig } from './dumpconfig.js'
 import { desktopDir, restoreDesktop } from './desktop.js'
+import { assertSafePackageName, resolveInside } from './safe-path.js'
 
 const execFileAsync = promisify(execFile)
 const CLI_PACKAGE = 'dsh-coexist-cli'
@@ -283,12 +284,9 @@ function parseViewJson(text) {
 
 async function inspectRemote(spec, runCommand) {
   const runner = runCommand ?? defaultRunCommand
-  const attempt = findNpmCli()
-    ? { file: process.execPath, args: [findNpmCli(), 'view', spec, '--json'] }
-    : {
-        file: process.platform === 'win32' ? 'npm.cmd' : 'npm',
-        args: ['view', spec, '--json'],
-      }
+  const cli = findNpmCli()
+  if (!cli) return null
+  const attempt = { file: process.execPath, args: [cli, 'view', spec, '--json'] }
   try {
     const { stdout } = await runner(attempt.file, attempt.args, { timeout: 60_000 })
     const data = parseViewJson(stdout)
@@ -319,16 +317,30 @@ async function inspectPlugin(options) {
   const abs = path.resolve(spec)
   if (fs.existsSync(path.join(abs, 'package.json'))) {
     const manifest = readJsonSync(path.join(abs, 'package.json'))
-    return { name: manifest.name, version: manifest.version, manifest, source: 'path', dir: abs }
+    const name = assertSafePackageName(manifest?.name)
+    return { name, version: manifest.version, manifest: { ...manifest, name }, source: 'path', dir: abs }
   }
 
-  const installed = readInstalledManifest(profileDir, spec)
+  let installed = null
+  try {
+    installed = readInstalledManifest(profileDir, assertSafePackageName(spec))
+  } catch {
+    // spec 不是裸包名（例如本地路径或 name@version），跳过已安装查询。
+  }
   if (installed) {
-    return { name: installed.name, version: installed.version, manifest: installed, source: 'profile' }
+    const name = assertSafePackageName(installed.name)
+    return { name, version: installed.version, manifest: { ...installed, name }, source: 'profile' }
+  }
+
+  if (!findNpmCli()) {
+    throw new Error('npm CLI not found; install Node.js with npm, or use a local plugin path')
   }
 
   const remote = await inspectRemote(spec, options.runCommand)
-  if (remote) return remote
+  if (remote) {
+    const name = assertSafePackageName(remote.name)
+    return { ...remote, name, manifest: { ...remote.manifest, name } }
+  }
 
   throw new Error(`Cannot resolve plugin: ${spec}`)
 }
@@ -347,19 +359,19 @@ function resolveBundledPnpm(appExe) {
 }
 
 async function defaultRunCommand(file, args, options = {}) {
-  // Windows 上 node 不会直接 spawn .cmd/.bat（EINVAL），必须交给 shell。
-  const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(file)
   return execFileAsync(file, args, {
     cwd: options.cwd,
     timeout: options.timeout ?? 120_000,
     windowsHide: true,
-    shell: needsShell,
     maxBuffer: 8 * 1024 * 1024,
     env: { ...process.env, ...(options.env ?? {}) },
   })
 }
 
 async function tryRun(runner, attempts, cwd) {
+  if (attempts.length === 0) {
+    return { ok: false, errors: ['no package manager available (npm CLI or bundled pnpm not found)'] }
+  }
   const errors = []
   for (const attempt of attempts) {
     try {
@@ -389,12 +401,8 @@ function findNpmCli() {
 
 function npmAttempt(args) {
   const cli = findNpmCli()
-  if (cli) return { name: 'npm', file: process.execPath, prefix: [cli], args }
-  return {
-    name: 'npm',
-    file: process.platform === 'win32' ? 'npm.cmd' : 'npm',
-    args,
-  }
+  if (!cli) return null
+  return { name: 'npm', file: process.execPath, prefix: [cli], args }
 }
 
 function managerAttempts(spec, appExe, action) {
@@ -409,24 +417,36 @@ function managerAttempts(spec, appExe, action) {
     })
   }
   if (action === 'add') {
-    attempts.push(npmAttempt(['install', spec, '--save-exact', '--no-audit', '--no-fund']))
+    const attempt = npmAttempt(['install', spec, '--save-exact', '--no-audit', '--no-fund'])
+    if (attempt) attempts.push(attempt)
   } else {
-    attempts.push(npmAttempt(['uninstall', spec, '--no-audit', '--no-fund']))
+    const attempt = npmAttempt(['uninstall', spec, '--no-audit', '--no-fund'])
+    if (attempt) attempts.push(attempt)
   }
   return attempts
 }
 
 async function copyDir(source, dest) {
-  await fsp.rm(dest, { recursive: true, force: true })
-  await fsp.mkdir(dest, { recursive: true })
-  for (const entry of await fsp.readdir(source, { withFileTypes: true })) {
+  const from = path.resolve(source)
+  const to = path.resolve(dest)
+  const into = path.relative(from, to)
+  const over = path.relative(to, from)
+  if (into === '' || (!into.startsWith('..') && !path.isAbsolute(into))) {
+    throw new Error(`Refusing to copy into its own source: ${to}`)
+  }
+  if (over === '' || (!over.startsWith('..') && !path.isAbsolute(over))) {
+    throw new Error(`Refusing to delete a parent of the source: ${to}`)
+  }
+  await fsp.rm(to, { recursive: true, force: true })
+  await fsp.mkdir(to, { recursive: true })
+  for (const entry of await fsp.readdir(from, { withFileTypes: true })) {
     if (entry.name === 'node_modules' || entry.name === '.tmp' || entry.name === 'test') continue
-    const from = path.join(source, entry.name)
-    const to = path.join(dest, entry.name)
-    if (entry.isDirectory()) await copyDir(from, to)
+    const entryFrom = path.join(from, entry.name)
+    const entryTo = path.join(to, entry.name)
+    if (entry.isDirectory()) await copyDir(entryFrom, entryTo)
     else if (entry.isSymbolicLink()) {
-      await fsp.symlink(await fsp.readlink(from), to).catch(() => {})
-    } else await fsp.copyFile(from, to)
+      await fsp.symlink(await fsp.readlink(entryFrom), entryTo).catch(() => {})
+    } else await fsp.copyFile(entryFrom, entryTo)
   }
 }
 
@@ -451,11 +471,12 @@ export function snapshotNodeModules(profileDir) {
 }
 
 function findIgnoredCopy(profileDir, name) {
+  const safeName = assertSafePackageName(name)
   const ignoredRoot = path.join(profileDir, 'node_modules', '.ignored')
-  const exact = path.join(ignoredRoot, name)
+  const exact = resolveInside(ignoredRoot, safeName)
   if (fs.existsSync(exact)) return exact
   for (let index = 1; index <= 20; index += 1) {
-    const candidate = path.join(ignoredRoot, `${name}_${index}`)
+    const candidate = resolveInside(ignoredRoot, `${safeName}_${index}`)
     if (fs.existsSync(candidate)) return candidate
   }
   return null
@@ -467,8 +488,15 @@ function findIgnoredCopy(profileDir, name) {
  */
 export async function restorePrunedPackages(profileDir, before) {
   const restored = []
-  for (const name of before) {
-    const target = path.join(profileDir, 'node_modules', name)
+  const nodeModules = path.join(profileDir, 'node_modules')
+  for (const raw of before) {
+    let name
+    try {
+      name = assertSafePackageName(raw)
+    } catch {
+      continue
+    }
+    const target = resolveInside(nodeModules, name)
     if (fs.existsSync(target)) continue
     const source = findIgnoredCopy(profileDir, name)
     if (!source) continue
@@ -492,7 +520,7 @@ async function stageLocalCli(profileDir, pluginDir) {
   const source = candidates.find((dir) => readJsonSync(path.join(dir, 'package.json'))?.name === CLI_PACKAGE)
   if (!source) return null
 
-  const staged = path.join(profileDir, '.dsh-coexist', 'plugins', CLI_PACKAGE)
+  const staged = resolveInside(path.join(profileDir, '.dsh-coexist', 'plugins'), CLI_PACKAGE)
   await copyDir(source, staged)
   return {
     dir: staged,
@@ -520,7 +548,7 @@ async function trackCoexistPlugin(profileDir, manifest) {
   const current = path.join(profileDir, 'node_modules', name)
   if (!fs.existsSync(path.join(current, 'package.json'))) return null
 
-  const staged = path.join(profileDir, '.dsh-coexist', 'plugins', name)
+  const staged = resolveInside(path.join(profileDir, '.dsh-coexist', 'plugins'), name)
   await copyDir(current, staged)
   const cli = await stageLocalCli(profileDir, current)
   if (cli) await rewriteDependency(path.join(staged, 'package.json'), CLI_PACKAGE, cli.rel)
@@ -566,6 +594,7 @@ async function removeIfEmpty(dir) {
  * - `purge` 时连同 `~/.dsh/coexist`（备份、报告、配置）一起删除。
  */
 async function cleanupInstallArtifacts(profileDir, name, home, options = {}) {
+  const safeName = assertSafePackageName(name)
   const cleaned = []
   const stagedRoot = path.join(profileDir, '.dsh-coexist', 'plugins')
 
@@ -575,10 +604,10 @@ async function cleanupInstallArtifacts(profileDir, name, home, options = {}) {
     cleaned.push(target)
   }
 
-  await remove(path.join(stagedRoot, name))
+  await remove(resolveInside(stagedRoot, safeName))
 
-  if (name === 'dsh-coexist-plugin') {
-    await remove(path.join(stagedRoot, CLI_PACKAGE))
+  if (safeName === 'dsh-coexist-plugin') {
+    await remove(resolveInside(stagedRoot, CLI_PACKAGE))
     const legacy = desktopDir(home)
     if (await pathExists(legacy)) {
       try {
@@ -601,7 +630,8 @@ async function cleanupInstallArtifacts(profileDir, name, home, options = {}) {
 }
 
 function verifyPluginDir(profileDir, name) {
-  const dir = path.join(profileDir, 'node_modules', name)
+  const safeName = assertSafePackageName(name)
+  const dir = resolveInside(path.join(profileDir, 'node_modules'), safeName)
   const manifest = readJsonSync(path.join(dir, 'package.json'))
   if (!manifest) return { ok: false, error: `package not found after install: ${dir}` }
   if (manifest.main && !fs.existsSync(path.resolve(dir, manifest.main))) {
@@ -684,7 +714,7 @@ export async function installPlugin(options = {}) {
     let spec = options.spec
     let localSpec = null
     if (local) {
-      const staged = path.join(profile.dir, '.dsh-coexist', 'plugins', inspected.name)
+      const staged = resolveInside(path.join(profile.dir, '.dsh-coexist', 'plugins'), inspected.name)
       await copyDir(inspected.dir, staged)
       if (inspected.name === 'dsh-coexist-plugin') {
         const cli = await stageLocalCli(profile.dir, inspected.dir)
@@ -709,7 +739,7 @@ export async function installPlugin(options = {}) {
         throw new Error(`Package manager failed: ${ran.errors.join(' | ')}`)
       } else {
         // 本地插件没有依赖：包管理器不可用时直接复制进 node_modules。
-        await copyDir(inspected.dir, path.join(profile.dir, 'node_modules', inspected.name))
+        await copyDir(inspected.dir, resolveInside(path.join(profile.dir, 'node_modules'), inspected.name))
         if (inspected.name === 'dsh-coexist-plugin') {
           const cli = await stageLocalCli(profile.dir, inspected.dir)
           if (cli) {
@@ -792,7 +822,7 @@ export async function uninstallPlugin(options = {}) {
   const manifest = readJsonSync(pkgFile)
   if (!manifest) throw new Error(`Profile not found: ${profile.dir}`)
 
-  const name = options.spec
+  const name = assertSafePackageName(options.spec)
   const backup = await createBackup(home, [
     pkgFile,
     profilePatch(profile.dir),
@@ -817,7 +847,7 @@ export async function uninstallPlugin(options = {}) {
   const attempts = managerAttempts(name, null, 'remove')
   const ran = await tryRun(runner, attempts, profile.dir)
   await fsp
-    .rm(path.join(profile.dir, 'node_modules', name), { recursive: true, force: true })
+    .rm(resolveInside(path.join(profile.dir, 'node_modules'), name), { recursive: true, force: true })
     .catch(() => {})
   const restoredPackages = await restorePrunedPackages(
     profile.dir,
@@ -861,7 +891,8 @@ export async function reinstallDependencies(options = {}) {
       args: ['install', '--config.strictDepBuilds=false'],
     })
   }
-  attempts.push(npmAttempt(['install', '--no-audit', '--no-fund']))
+  const npm = npmAttempt(['install', '--no-audit', '--no-fund'])
+  if (npm) attempts.push(npm)
 
   const ran = await tryRun(runner, attempts, profile.dir)
   return {
@@ -870,6 +901,55 @@ export async function reinstallDependencies(options = {}) {
     profileDir: profile.dir,
     packageManager: ran.ok ? ran.pm : null,
     errors: ran.ok ? [] : ran.errors,
+  }
+}
+
+/**
+ * 安装一个普通依赖（例如缺失的 peer），不加入 dsh.profile.bundles。
+ * 失败时恢复 package.json 和 lockfile；node_modules 里的新文件可能残留，需要时重装。
+ */
+export async function installDependency(options = {}) {
+  const home = resolveHome(options.home)
+  const profileName = options.profile ?? defaultProfile(home)
+  const profile = resolveProfile(home, profileName)
+  const pkgFile = profilePackageJson(profile.dir)
+  if (!fs.existsSync(pkgFile)) throw new Error(`Profile not found: ${profile.dir}`)
+
+  const name = assertSafePackageName(options.name)
+  const version = options.version == null ? null : String(options.version).trim()
+  if (version && !/^[0-9]+(?:\.[0-9]+){0,2}(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
+    throw new Error(`Invalid dependency version: ${version}`)
+  }
+
+  const spec = version ? `${name}@${version}` : name
+  const host = detectDshVersion({ ...options, home, profile: profileName })
+  const backup = await createBackup(home, [
+    pkgFile,
+    path.join(profile.dir, 'pnpm-lock.yaml'),
+    path.join(profile.dir, 'package-lock.json'),
+  ])
+  const runner = options.runCommand ?? defaultRunCommand
+  const ran = await tryRun(runner, managerAttempts(spec, host.appExe, 'add'), profile.dir)
+  if (!ran.ok) {
+    await rollbackById(home, path.basename(backup.dir))
+    return {
+      ok: false,
+      error: `Package manager failed: ${ran.errors.join(' | ')}`,
+      name,
+      spec,
+      backup: backup.dir,
+      rolledBack: true,
+    }
+  }
+
+  return {
+    ok: true,
+    name,
+    spec,
+    version,
+    backup: backup.dir,
+    packageManager: ran.pm,
+    warning: 'node_modules may keep files from the failed attempt; run install again if the package is inconsistent',
   }
 }
 
