@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { isLoopbackAddress, isSameOrigin, rejectReason } from '../src/ui.js'
+import { connectionRejection, isLoopbackAddress, isSameOrigin, rejectReason } from '../src/ui.js'
 
 test('isLoopbackAddress accepts loopback and in-process calls', () => {
   assert.equal(isLoopbackAddress(undefined), true)
@@ -51,4 +51,37 @@ test('rejectReason blocks wrong method, non-JSON body, cross-site origin and LAN
     'cross-origin request rejected',
   )
   assert.equal(rejectReason({ ...base, socket: { remoteAddress: '192.168.1.5' } }), 'local requests only')
+})
+
+test('connectionRejection forwards 401/403 from the DSH connection service', () => {
+  const req = { headers: { host: '127.0.0.1:56002' } }
+  const makeCtx = (rejection) => ({
+    get: (name) => (name === 'connection' ? { requestRejection: () => rejection } : undefined),
+  })
+  assert.equal(connectionRejection(makeCtx(401), req), 401)
+  assert.equal(connectionRejection(makeCtx(403), req), 403)
+  assert.equal(connectionRejection(makeCtx(undefined), req), undefined)
+})
+
+test('connectionRejection falls back when the connection service is absent', () => {
+  const req = { headers: {} }
+  assert.equal(connectionRejection({}, req), undefined)
+  assert.equal(connectionRejection({ get: () => undefined }, req), undefined)
+  assert.equal(connectionRejection({ connection: {} }, req), undefined)
+})
+
+test('connectionRejection reads ctx.connection directly and fails closed on errors', () => {
+  const req = { headers: {} }
+  assert.equal(connectionRejection({ connection: { requestRejection: () => 401 } }, req), 401)
+
+  const logs = []
+  const ctx = {
+    connection: {
+      requestRejection: () => {
+        throw new Error('boom')
+      },
+    },
+  }
+  assert.equal(connectionRejection(ctx, req, (line) => logs.push(line)), 403)
+  assert.match(logs[0], /connection check failed: boom/)
 })

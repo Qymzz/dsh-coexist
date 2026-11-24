@@ -133,6 +133,29 @@ export function rejectReason(req) {
   return null
 }
 
+/**
+ * DSH 原生的 Host/Origin 校验与浏览器会话认证（`dsh web` 的 Connection 服务）。
+ * 返回 401/403 表示拒绝，undefined 表示放行。
+ * 宿主没有 Connection 服务时放行，交由 rejectReason 兜底，避免桌面/旧宿主整页不可用；
+ * 服务存在但检查抛错时按拒绝处理，保持 fail-closed。
+ */
+export function connectionRejection(ctx, req, log) {
+  let connection
+  try {
+    connection = typeof ctx?.get === 'function' ? ctx.get('connection') ?? ctx.connection : ctx?.connection
+  } catch {
+    connection = undefined
+  }
+  if (typeof connection?.requestRejection !== 'function') return undefined
+  try {
+    const rejection = connection.requestRejection(req)
+    return rejection === 401 || rejection === 403 ? rejection : undefined
+  } catch (error) {
+    log?.(`[coexist] connection check failed: ${error?.message ?? String(error)}`)
+    return 403
+  }
+}
+
 /** 插件自带的 CLI 依赖（dsh-coexist-cli），无需用户配置路径。 */
 function bundledCli() {
   try {
@@ -343,6 +366,14 @@ export function installUiRoutes(ctx, options = {}) {
               kind: 'exact',
               path: `${ROUTE_PREFIX}${name}`,
               handler: async (req, res) => {
+                const blocked = connectionRejection(ctx, req, options.log)
+                if (blocked) {
+                  sendJson(res, blocked, {
+                    ok: false,
+                    error: blocked === 401 ? 'unauthorized' : 'forbidden',
+                  })
+                  return
+                }
                 const rejected = rejectReason(req)
                 if (rejected) {
                   sendJson(res, rejected === 'POST required' ? 405 : 403, { ok: false, error: rejected })

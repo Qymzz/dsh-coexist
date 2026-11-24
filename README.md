@@ -1,13 +1,13 @@
 # dsh-coexist
 
-DSH 插件共存工具（0.1.0）。
+DSH 插件共存工具（0.1.1）。
 
 当两个插件抢同一个工具、命令、provider 或 service 时，尽量让它们都留下，而不是默认卸载一个。
 
 - npm 插件：[dsh-coexist-plugin](https://www.npmjs.com/package/dsh-coexist-plugin)
 - npm CLI：[dsh-coexist-cli](https://www.npmjs.com/package/dsh-coexist-cli)
 - GitHub：https://github.com/Qymzz/dsh-coexist
-- 市场：PR [#17878](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/17878)，等待合并
+- 市场：已合并（PR [#17878](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/17878)）
 - 兼容：DSH 0.2.x，已在 DSH NEXT 2.0.21-next / `@deepseek-ai/dsh` 0.2.1-rc.4 验证
 - 平台：Windows
 
@@ -168,7 +168,7 @@ config:
 - 不修改第三方插件源码
 - 插件端 fail-open：包装失败时退回原生行为
 - 不做假路由、不做静默替换
-- 设置页接口只接受 `POST` + `application/json`，只允许本机回环连接；`Origin` 为 http(s) 时必须同源
+- 设置页接口先经过 DSH 原生 Connection 检查（Host/Origin 与浏览器会话），再叠加本机回环、`POST` + `application/json`、同源校验
 - 跨站表单、`text/plain` 请求和局域网来源都会被拒绝
 - 卸载、回滚、结束端口进程在 UI 里都有二次确认
 
@@ -233,9 +233,9 @@ name: dsh-coexist-plugin
 
 ## 发布状态
 
-- npm：`dsh-coexist-plugin@0.1.0`、`dsh-coexist-cli@0.1.0`
+- npm：`dsh-coexist-plugin@0.1.1`、`dsh-coexist-cli@0.1.1`
 - GitHub：https://github.com/Qymzz/dsh-coexist
-- 市场：PR [#17878](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/17878)，等待维护者合并
+- 市场：已合并（PR [#17878](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/17878)）
 - 自托管索引：`market/index.json`
 - 许可证：MIT，见 [LICENSE](LICENSE)
 

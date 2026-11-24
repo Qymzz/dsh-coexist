@@ -1,6 +1,6 @@
 {
   "name": "dsh-coexist-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pre-boot conflict scanner and repair planner for DeepSeek Harness profiles.",
   "type": "module",
   "bin": {
