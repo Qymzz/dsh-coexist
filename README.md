@@ -2,7 +2,7 @@
 
 DSH 插件共存与治理工具（0.1.2）。
 
-当两个插件抢同一个工具、命令、provider 或 service 时，尽量让它们都留下，而不是默认卸载一个。
+两个插件抢同一个工具或命令时，不用卸载其中一个：后装的那个自动加后缀，两个都能继续用。设置页还能看依赖和冲突、修复常见冲突、回滚，并限制哪个 Agent 能调用哪个工具。
 
 - npm 插件：[dsh-coexist-plugin](https://www.npmjs.com/package/dsh-coexist-plugin)
 - npm CLI：[dsh-coexist-cli](https://www.npmjs.com/package/dsh-coexist-cli)

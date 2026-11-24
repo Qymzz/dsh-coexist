@@ -1,6 +1,6 @@
 # dsh-coexist-plugin
 
-**让 DSH 里抢同一个资源的插件尽量都留下，并管理它们的依赖、顺序、路由和调用策略。**  
+**让 DSH 插件一起工作：两个插件抢同一个工具或命令时不用卸载，后装的那个自动加后缀，两个都能用；设置页统一管理依赖、冲突、回滚、路由和调用策略。**  
 *Plugin coexistence for DeepSeek Harness: when two plugins claim the same tool, command, provider or service, keep both instead of silently dropping one.*
 
 ---

@@ -25,8 +25,8 @@
       "name": "dsh-coexist-plugin",
       "title": "Qymzz/dsh-coexist",
       "description": {
-        "en": "Keep plugins that claim the same tool, command, provider or service: duplicate tools become name__coexistN aliases, conflicts are scanned and repaired from a settings page, and every write is backed up.",
-        "zh": "让抢同一个工具 / 命令 / provider / service 的插件尽量都留下：同名工具自动注册为 name__coexistN，设置页提供状态、检查冲突、一键修复、回滚、安装卸载与保留原名；所有写操作先备份。"
+        "en": "Keep DSH plugins working together: when two plugins want the same tool or command, neither has to be removed; the later one gets a suffix and both keep working, while the settings page shows dependencies and conflicts, fixes common conflicts, rolls back, and limits which agent can call which tool.",
+        "zh": "让 DSH 插件一起工作：两个插件抢同一个工具或命令时，不用卸载其中一个，后装的那个自动加后缀，两个都能用；设置页能看依赖和冲突、修复常见冲突、回滚，并限制哪个 Agent 能调用哪个工具。"
       },
       "homepage": "https://github.com/Qymzz/dsh-coexist",
       "repository": {

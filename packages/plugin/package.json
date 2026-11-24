@@ -1,7 +1,7 @@
 {
   "name": "dsh-coexist-plugin",
   "version": "0.1.2",
-  "description": "DSH plugin coexistence: keep plugins that claim the same tool, command, provider or service. · DSH 插件共存：同名工具自动别名、冲突检测与一键修复。",
+  "description": "Keep DSH plugins that want the same tool or command working side by side. · 让抢同一个工具或命令的 DSH 插件一起工作：自动加后缀保留双方，设置页检查冲突、回滚、限制工具调用。",
   "icon": "assets/icon.svg",
   "type": "module",
   "main": "index.js",
