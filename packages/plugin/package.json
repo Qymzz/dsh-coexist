@@ -1,7 +1,7 @@
 {
   "name": "dsh-coexist-plugin",
   "version": "0.1.2",
-  "description": "Keep DSH plugins that want the same tool or command working side by side. · 让抢同一个工具或命令的 DSH 插件一起工作：自动加后缀保留双方，设置页检查冲突、回滚、限制工具调用。",
+  "description": "A control center for DSH plugins: coexistence, dependencies, conflicts, rollback, routing and tool policies. · DSH 插件控制中心：冲突插件同时保留，依赖、冲突、回滚、路由和工具策略一处管理。",
   "icon": "assets/icon.svg",
   "type": "module",
   "main": "index.js",
